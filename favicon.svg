@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="عقل فعّال">
+  <rect width="32" height="32" rx="7" fill="#07131c"/>
+  <circle cx="16" cy="16" r="7.2" fill="#0c6e78"/>
+  <circle cx="16" cy="16" r="2.5" fill="#e0a15a"/>
+  <path d="M16 5.4v3.1M16 23.5v3.1M5.4 16h3.1M23.5 16h3.1M8.2 8.2l2.2 2.2M21.6 21.6l2.2 2.2M23.8 8.2l-2.2 2.2M10.4 21.6l-2.2 2.2" stroke="#e0a15a" stroke-width="1.7" stroke-linecap="round"/>
+</svg>

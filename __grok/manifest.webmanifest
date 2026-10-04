@@ -1,0 +1,17 @@
+{
+  "name": "عقل فعّال",
+  "short_name": "عقل فعّال",
+  "id": "/do-craft/",
+  "start_url": "/do-craft/",
+  "scope": "/do-craft/",
+  "display": "standalone",
+  "background_color": "#F6F1E7",
+  "theme_color": "#0C6E78",
+  "icons": [
+    {
+      "src": "/do-craft/__grok/icon-180.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}

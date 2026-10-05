@@ -1,0 +1,1 @@
+import{P as e}from"./chrome-0wY267Au.js";import{xr as t}from"./index-DxS1gsxI.js";import{n}from"./track-view-DHAv0TKi.js";var r=e(),i=function(){let{stageId:e}=t.useParams();return(0,r.jsx)(n,{track:`restore`,stageId:e})};export{i as component};

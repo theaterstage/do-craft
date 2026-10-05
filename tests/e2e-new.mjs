@@ -8,7 +8,7 @@ const exf=fs.readdirSync(SITE+'/assets').find(f=>/^exercises-.*\.js$/.test(f));
 const ex=await import(pathToFileURL(SITE+'/assets/'+exf).href);
 const CONC=+(process.env.CONC||6), OUT=process.env.OUT||'e2e-new.json';
 const ONLY=process.env.ONLY?new RegExp(process.env.ONLY):null;
-const PARTS=(process.env.PARTS||'nav,items,wrong,unlock,persist,timers,mobile,en').split(',');
+const PARTS=(process.env.PARTS||'nav,items,wrong,unlock,persist,timers,mobile,en,tools,home').split(',');
 const strip=s=>String(s).replace(/[\u2066\u2069]/g,'').replace(/\s+/g,' ').trim();
 const browser=await chromium.launch({executablePath:'/usr/bin/google-chrome',args:['--no-sandbox']});
 const results=[]; let failCount=0;
@@ -26,9 +26,11 @@ async function ctxPage(opts={}){
   return {ctx,page,errs};
 }
 const stateWith=(extra={},attempts=[])=>({state:{locale:'ar',theme:'light',largeText:false,reduceMotion:true,onboarded:true,ageGroup:'18+',name:'T',sessionMinutes:25,attempts,xp:0,goals:[],memory:[],exams:[],stageOverrides:[],...extra},version:2});
-const ALLRS=ex.restore.stages.map(s=>s.id), ALLIQ=ex.iq.stages.map(s=>s.id);
-const openAll=()=>stateWith({stageOverrides:[...ALLRS,...ALLIQ]});
-async function goto(page,r){await page.goto(URLB+r+'/',{waitUntil:'load'});await page.waitForFunction(()=>{const m=document.querySelector('main');return m&&m.innerText.trim().length>2&&!/جارٍ التحميل/.test(m.innerText)},null,{timeout:20000})}
+const TRK={restore:{t:ex.restore,need:7,n:9,prefix:'rs'},iq:{t:ex.iq,need:7,n:10,prefix:'iq'},brain:{t:ex.brain,need:7,n:9,prefix:'bd'},proc:{t:ex.proc,need:8,n:11,prefix:'pc'},dragon:{t:ex.dragon,need:12,n:16,prefix:'dg'}};
+const ALLSTAGES=Object.values(TRK).flatMap(k=>k.t.stages.map(s=>s.id));
+const ALLITEMS=Object.values(TRK).flatMap(k=>k.t.items);
+const openAll=()=>stateWith({stageOverrides:ALLSTAGES});
+async function goto(page,r){await page.goto(URLB+r+'/',{waitUntil:'load'});await page.waitForFunction(()=>{const m=document.querySelector('main');return m&&m.innerText.trim().length>2&&!/جارٍ التحميل/.test(m.innerText)},null,{timeout:20000});await page.waitForLoadState('networkidle',{timeout:8000}).catch(()=>{})}
 async function clickExact(page,sel,text){
   const h=await page.evaluateHandle(([sel,text,strip])=>{const f=new Function('s','return String(s).replace(/[\\u2066\\u2069]/g,"").replace(/\\s+/g," ").trim()');return [...document.querySelectorAll(sel)].find(b=>f(b.textContent)===f(text)&&!b.disabled)||null},[sel,text,null]);
   const el=h.asElement(); if(!el)throw new Error('no element '+sel+' = '+text); await el.click(); }
@@ -80,6 +82,26 @@ async function solve(page,it,{clock=false,wrong=false}={}){
     case 'reflect':{const t=page.locator('main textarea');const n=await t.count();for(let i=0;i<n;i++)await t.nth(i).fill(wrong?'قصير':'جملة صادقة طويلة بما يكفي للتمرين '+i);await done();break}
     case 'recall':{await page.locator('main textarea').fill(wrong?'x':x.accept[0]);await btn(page,'تحقق').click();await done();break}
     case 'calibrate':{const q=x.question;await page.locator('main input[type=range]').fill(wrong?'0':'100');await clickExact(page,'main button',q.options[wrong?(q.correct+1)%4:q.correct].ar);await done();break}
+    case 'memory':{
+      await btn(page,'ابدأ الحفظ').click();
+      const shown=(await page.locator('[data-testid=memory-words] li').allInnerTexts()).map(strip);
+      if(shown.length!==x.items.length||x.items.some(i=>!shown.includes(strip(i.ar))))throw new Error('memory words not shown');
+      if(clock){await page.clock.runFor((x.seconds+1)*1000)}else{await btn(page,'أخفِ الكلمات الآن').click()}
+      await page.waitForSelector('[data-testid=memory-options]');
+      if((await page.locator('[data-testid=memory-words]').count())!==0)throw new Error('words still visible while recalling');
+      const pickFrom=wrong?x.decoys:x.items;
+      for(const w of pickFrom)await clickExact(page,'[data-testid=memory-options] button',w.ar);
+      await btn(page,'تحقق').click();await page.waitForSelector('[data-testid=memory-verdict]');
+      const v=await page.locator('[data-testid=memory-verdict]').innerText(); if(!wrong&&!v.includes(`${x.items.length} من ${x.items.length}`))throw new Error('memory verdict '+v);
+      await done();break}
+    case 'move':{
+      const safe=await page.locator('[data-testid=move-safety]').innerText(); if(!/توقف/.test(safe)||!/ألم/.test(safe))throw new Error('no safety note');
+      for(let i=0;i<x.moves.length;i++){
+        const nm=await page.locator('[data-testid=move-name]').innerText(); if(strip(nm)!==strip(x.moves[i].name.ar))throw new Error('move name '+nm);
+        if(wrong)await btn(page,'تخطَّ هذه الحركة').click();
+        else{await btn(page,'ابدأ المؤقت').click();await btn(page,'أنهيت الحركة').click()}
+      }
+      await page.waitForSelector('[data-testid=move-summary]');await done();break}
     default:throw new Error('unknown type '+x.type)
   }
   return readScore(page);
@@ -109,23 +131,47 @@ if(PARTS.includes('nav')){
   const homeLinks=await page.locator('main a[href]').evaluateAll(a=>a.map(x=>x.getAttribute('href')));
   rec('home has /restore card',homeLinks.some(h=>h.endsWith('/restore')),homeLinks.filter(h=>/restore|iq/.test(h)).join(','));
   rec('home has /iq card',homeLinks.some(h=>h.endsWith('/iq')));
+  rec('home has /brain card',homeLinks.some(h=>h.endsWith('/brain')));
   const navLinks=await page.locator('nav[aria-label=Primary] a[href]').evaluateAll(a=>a.map(x=>x.getAttribute('href')));
-  rec('desktop sidebar nav has restore+iq with /do-craft base',navLinks.includes('/do-craft/restore')&&navLinks.includes('/do-craft/iq'),navLinks.join(','));
-  for(const [route,count,label] of [['/restore',30,'استعادة الدوبامين'],['/iq',20,'تمارين زيادة الذكاء']]){
+  rec('desktop sidebar nav has restore+iq+brain+proc+dragon+tools with /do-craft base',['restore','iq','brain','proc','dragon','tools'].every(k=>navLinks.includes('/do-craft/'+k)),navLinks.join(','));
+  const SENT='يسهّل المذاكرة: انتبه، وتذكّر، وابدأ. كل تمرين يشرح الجواب. الدرجة ليست ذكاء.';
+  for(const [route,count,label] of [['/restore',30,'استعادة الدوبامين'],['/iq',20,'تمارين زيادة الذكاء'],['/brain',30,'تمارين مقاومة تبلد الدماغ'],['/proc',18,'مواجهة المماطلة'],['/dragon',22,'ترويض التنين الخامل']]){
     await goto(page,route); const rows=await page.locator('main ol > li').count();
     const h1=await page.locator('main h1').innerText();
     rec(`${route} lists ${count} stages`,rows===count&&h1.includes(label),`rows=${rows} h1=${h1}`);
-    const txt=await page.locator('main').innerText(); rec(`${route} has disclaimer`,/ليس.*(علاجًا|اختبار ذكاء)/.test(txt));
+    const txt=await page.locator('main').innerText(); rec(`${route} has disclaimer`,/ليس.*(علاجًا|اختبار ذكاء)|وليست علاجًا/.test(txt));
+    if(route==='/restore'||route==='/iq'){
+      rec(`${route}: exact sentence kept, no word «تدريب» in page content`,txt.includes(SENT)&&!/تدريب/.test(txt),txt.includes(SENT)+' '+/تدريب/.test(txt));
+      rec(`${route}: tagline «التمارين الأعلى كفاءة في تنشيط العقل وتقليل الدوبامين الرخيص»`,(await page.locator('[data-testid=track-tagline]').innerText()).trim()==='التمارين الأعلى كفاءة في تنشيط العقل وتقليل الدوبامين الرخيص');
+      const co=page.locator('[data-testid=bulb-callout]');
+      rec(`${route}: light-bulb callout with exact text`,(await co.count())===1&&(await co.innerText()).trim()==='استعادة عقلك تستحق المحاولة كل يوم'&&(await co.locator('svg path').count())>=2);
+    }
+    if(route==='/brain'){
+      rec('/brain: intro text exact',txt.includes('ما يُعرف بتعفّن الدماغ هو تبلد خطر يقلل من فاعلية العقل وإنتاجيته ونشاطه. هنا ستلاحظ الفرق المذهل… ابدأ ثم خذ استراحتك لا تتعجل النتائج ولكن لا تقع في حيرة التسويف مجدداً'));
+      rec('/brain: methods named (kaizen, hansei, shu-ha-ri, sun tzu, go, wu wei...)',['كايزن','هانسي','شو-ها-ري','سون تزو','غو','وو وي','يين ويانغ','هارا هاتشي بو','قصر الذاكرة','الخرائط الذهنية'].every(w=>txt.includes(w)));
+    }
+    if(route==='/proc'||route==='/dragon'){
+      rec(`${route}: Duolingo-style map (nodes, xp, streak, progress bar)`,(await page.locator('[data-testid=path-map]').count())===1&&(await page.locator('[data-testid=path-xp]').count())===1&&(await page.locator('[data-testid=path-streak]').count())===1&&(await page.locator('[role=progressbar]').count())>=1);
+      const st=await page.locator('main ol > li').evaluateAll(l=>l.map(x=>x.getAttribute('data-state')));
+      rec(`${route}: initial node states (1 current, rest locked)`,st[0]==='current'&&st.slice(1).every(x=>x==='locked'),st.slice(0,4).join(','));
+    }
+    if(route==='/dragon') rec('/dragon: safety note shown',/توقّف فورًا|توقف فورًا/.test(txt)&&/ألم/.test(txt));
   }
   await goto(page,'/dopamine'); const cross=await page.locator('main a[href$="/restore"]').count(); rec('/dopamine links to /restore (reuse/extend)',cross>=1);
   await goto(page,'/restore'); rec('/restore links back to /dopamine',(await page.locator('main a[href$="/dopamine"]').count())>=1);
   // search
   await goto(page,'/search'); await page.locator('input').first().fill('استعادة'); await page.waitForTimeout(400);
   rec('search finds restore',(await page.locator('main a[href$="/restore"]').count())>=1);
+  await page.locator('input').first().fill('مماطلة'); await page.waitForTimeout(400);
+  rec('search finds /proc',(await page.locator('main a[href$="/proc"]').count())>=1);
+  await page.locator('input').first().fill('التنين'); await page.waitForTimeout(400);
+  rec('search finds /dragon',(await page.locator('main a[href$="/dragon"]').count())>=1);
+  await page.locator('input').first().fill('أدوات'); await page.waitForTimeout(400);
+  rec('search finds /tools',(await page.locator('main a[href$="/tools"]').count())>=1);
   rec('nav page-level errors',errs.length===0,errs.slice(0,3).join(' | '));
   await ctx.close();
   // every stage page lists its exercises (all unlocked via overrides)
-  const sres=[]; const stages=[...ex.restore.stages.map(s=>['restore',s,9]),...ex.iq.stages.map(s=>['iq',s,10])];
+  const sres=[]; const stages=Object.entries(TRK).flatMap(([k,v])=>v.t.stages.map(s=>[k,s,v.n]));
   await pool(stages,CONC,async([tr,s,n])=>{
     const {ctx,page,errs}=await ctxPage({state:openAll()});
     try{await goto(page,`/${tr}/${s.id}`);const lis=await page.locator('main ol > li a[href*="/train/"]').count();const ok=lis===n;
@@ -135,15 +181,15 @@ if(PARTS.includes('nav')){
       sres.push({id:s.id,pass:ok&&here&&!errs.length,info:`links=${lis} first=${here} errs=${errs.length}`})}
     catch(e){sres.push({id:s.id,pass:false,info:String(e.message).slice(0,120)})}
     await ctx.close()});
-  const bad=sres.filter(r=>!r.pass); rec(`all 50 stage pages list their exercises (${stages.length-bad.length}/${stages.length})`,bad.length===0,bad.slice(0,5).map(b=>b.id+':'+b.info).join(' | '));
+  const bad=sres.filter(r=>!r.pass); rec(`all ${stages.length} stage pages list their exercises (${stages.length-bad.length}/${stages.length})`,bad.length===0,bad.slice(0,5).map(b=>b.id+':'+b.info).join(' | '));
 }
 
 // ================= PART: every exercise solved correctly =================
 let itemRes=[];
 if(PARTS.includes('items')){
-  let all=[...ex.restore.items,...ex.iq.items]; if(ONLY)all=all.filter(i=>ONLY.test(i.id));
+  let all=[...ALLITEMS]; if(ONLY)all=all.filter(i=>ONLY.test(i.id));
   const t0=Date.now();
-  await pool(all,CONC,async it=>{const r=await runItem(it,{clock:it.interaction.type==='breathe'});r.pass=!r.err&&r.score===100&&r.errs.length===0;itemRes.push(r);if(!r.pass)console.log('FAIL item',JSON.stringify(r))});
+  await pool(all,CONC,async it=>{const r=await runItem(it,{clock:it.interaction.type==='breathe'||(it.interaction.type==='memory'&&it.id.endsWith('3'))});r.pass=!r.err&&r.score===100&&r.errs.length===0;itemRes.push(r);if(!r.pass)console.log('FAIL item',JSON.stringify(r))});
   const byType={}; itemRes.forEach(r=>{(byType[r.type]??={n:0,pass:0});byType[r.type].n++;if(r.pass)byType[r.type].pass++});
   const bad=itemRes.filter(r=>!r.pass);
   rec(`every exercise solved to 100 (${itemRes.length-bad.length}/${itemRes.length}) in ${Math.round((Date.now()-t0)/1000)}s`,bad.length===0,JSON.stringify(byType)+(bad.length?' FAILS '+bad.slice(0,6).map(b=>b.id+':'+(b.err||b.score)).join(','):''));
@@ -151,8 +197,8 @@ if(PARTS.includes('items')){
 
 // ================= PART: wrong answers fail, retry works =================
 if(PARTS.includes('wrong')){
-  const types=['breathe','quiz','calc','scenario','sprint','match','classify','reflect','recall','calibrate'];
-  const sample=[]; for(const t of types){const it=[...ex.restore.items,...ex.iq.items].find(i=>i.interaction.type===t&&(!i.interaction.seconds||t==='calc'));sample.push(it)}
+  const types=['breathe','quiz','calc','scenario','sprint','match','classify','reflect','recall','calibrate','memory','move'];
+  const sample=[]; for(const t of types){const it=ALLITEMS.find(i=>i.interaction.type===t&&(!i.interaction.seconds||t==='calc'||t==='memory'));sample.push(it)}
   sample.push(ex.iq.items.find(i=>i.interaction.type==='quiz'&&i.interaction.seconds));
   sample.push(ex.iq.items.find(i=>i.interaction.type==='order')); // order: unshuffled check separately
   const wr=[];
@@ -172,7 +218,7 @@ if(PARTS.includes('wrong')){
 
 // ================= PART: unlock flow =================
 if(PARTS.includes('unlock')){
-  for(const [tr,stages,items,need] of [['restore',ex.restore.stages,ex.restore.items,7],['iq',ex.iq.stages,ex.iq.items,7]]){
+  for(const [tr,stages,items,need] of Object.entries(TRK).map(([k,v])=>[k,v.t.stages,v.t.items,v.need])){
     const {ctx,page,errs}=await ctxPage({state:stateWith({})});
     const s1=stages[0].id,s2=stages[1].id,its1=items.filter(i=>i.stageId===s1);
     await goto(page,`/${tr}`);
@@ -248,9 +294,9 @@ if(PARTS.includes('mobile')){
   const {ctx,page,errs}=await ctxPage({mobile:true,state:openAll()});
   await goto(page,'');
   const links=await page.locator('nav.fixed a[href]').evaluateAll(a=>a.map(x=>x.getAttribute('href')));
-  rec('mobile bottom nav has 7 entries incl. restore + iq',links.length===7&&links.includes('/do-craft/restore')&&links.includes('/do-craft/iq'),links.join(','));
+  rec('mobile bottom nav has 8 entries incl. restore + iq + brain',links.length===8&&['restore','iq','brain'].every(k=>links.includes('/do-craft/'+k)),links.join(','));
   const ov=await page.evaluate(()=>document.documentElement.scrollWidth-window.innerWidth); rec('mobile home has no horizontal overflow',ov<=1,'overflow='+ov);
-  for(const r of ['/restore','/iq','/restore/rs05','/iq/iq10','/train/rs05-t07','/train/iq10-t08','/train/iq03-t05']){await goto(page,r);const o=await page.evaluate(()=>document.documentElement.scrollWidth-window.innerWidth);rec(`mobile ${r} no horizontal overflow`,o<=1,'overflow='+o)}
+  for(const r of ['/restore','/iq','/brain','/proc','/dragon','/tools','/proc/pc03','/dragon/dg05','/brain/bd07','/restore/rs05','/iq/iq10','/train/rs05-t07','/train/iq10-t08','/train/iq03-t05','/train/dg03-t01','/train/bd04-t03','/train/pc02-t11']){await goto(page,r);const o=await page.evaluate(()=>document.documentElement.scrollWidth-window.innerWidth);rec(`mobile ${r} no horizontal overflow`,o<=1,'overflow='+o)}
   await page.locator('nav.fixed a[href$="/restore"]').click(); await page.waitForURL(/\/restore\/?$/); rec('mobile nav click -> /restore',true);
   await page.locator('nav.fixed a[href$="/iq"]').click(); await page.waitForURL(/\/iq\/?$/); rec('mobile nav click -> /iq',true);
   const it=ex.restore.items.find(i=>i.id==='rs07-t06'); await goto(page,'/train/'+it.id); const sc=await solve(page,it,{}); rec('mobile solve match exercise',sc===100);
@@ -260,15 +306,115 @@ if(PARTS.includes('mobile')){
 
 // ================= PART: English locale =================
 if(PARTS.includes('en')){
-  const {ctx,page,errs}=await ctxPage({state:stateWith({locale:'en',stageOverrides:[...ALLRS,...ALLIQ]})});
+  const {ctx,page,errs}=await ctxPage({state:stateWith({locale:'en',stageOverrides:ALLSTAGES})});
   await goto(page,'/restore'); const h=await page.locator('main h1').innerText(); rec('en: /restore title',/Dopamine restoration/.test(h),h);
   await goto(page,'/iq/iq03'); const t=await page.locator('main').innerText(); rec('en: /iq stage renders',/Stage 3/.test(t)&&/Times tables/.test(t),t.slice(0,60).replace(/\n/g,' '));
   const it=ex.iq.items.find(i=>i.id==='iq03-t01'); await goto(page,'/train/'+it.id);
   const q=it.interaction.questions[0]; await page.locator('[data-testid=calc-input]').fill(String(q.answer)); await page.locator('main button',{hasText:'Check'}).click();
   const v=await page.locator('[data-testid=calc-verdict]').innerText(); rec('en: calc verdict in English',/Correct/.test(v),v);
+  await goto(page,'/proc'); const e1=await page.locator('main h1').innerText(); rec('en: /proc title',/Facing procrastination/.test(e1),e1);
+  await goto(page,'/tools'); const e2=await page.locator('main h1').innerText(); rec('en: /tools title',/Helper tools/.test(e2),e2);
   rec('en errors',errs.length===0,errs.slice(0,3).join(' | '));
   await ctx.close();
 }
+// ================= PART: map progress + home sections =================
+if(PARTS.includes('home')){
+  for(const [tr,k] of [['proc',TRK.proc],['dragon',TRK.dragon]]){
+    const {ctx,page,errs}=await ctxPage({state:stateWith({})});
+    await goto(page,'');
+    const hs=page.locator('[data-testid=home-'+tr+']');
+    rec(`home bottom section «${tr==='proc'?'مواجهة المماطلة':'ترويض التنين الخامل'}» with stats and mini map`,(await hs.count())===1&&(await hs.locator('[data-testid=mini-map] li').count())===5&&/النقاط 0/.test(await hs.innerText()),(await hs.innerText()).replace(/\n/g,' ').slice(0,100));
+    await hs.locator('a',{hasText:'ابدأ المسار'}).click(); await page.waitForURL(new RegExp('/'+tr+'/?$'));
+    rec(`home «${tr}» button opens /${tr}`,true);
+    // solve `need` items of stage 1 via UI, check map states / xp / streak / bar
+    const its=k.t.items.filter(i=>i.stageId===k.t.stages[0].id);
+    for(const it of its.slice(0,k.need)){await goto(page,'/train/'+it.id);const sc=await solve(page,it,{});if(sc!==100)throw new Error('solve '+it.id)}
+    await goto(page,'/'+tr);
+    const st=await page.locator('main ol > li').evaluateAll(l=>l.map(x=>x.getAttribute('data-state')));
+    rec(`/${tr} map after passing ${k.need}/${k.n}: stage 1 done, stage 2 current, rest locked`,st[0]==='done'&&st[1]==='current'&&st.slice(2).every(x=>x==='locked'),st.slice(0,4).join(','));
+    const xp=+(await page.locator('[data-testid=path-xp]').innerText()), sk=+(await page.locator('[data-testid=path-streak]').innerText());
+    rec(`/${tr} XP > 0 and streak >= 1`,xp>=k.need*20&&sk>=1,`xp=${xp} streak=${sk}`);
+    const bar=await page.locator('[data-testid=path-bar]').getAttribute('style'); rec(`/${tr} progress bar moved`,/width:\s*[1-9]/.test(bar),bar);
+    await page.reload(); await page.waitForSelector('[data-testid=path-map]');
+    const st2=await page.locator('main ol > li').evaluateAll(l=>l.map(x=>x.getAttribute('data-state'))); rec(`/${tr} progress survives reload`,st2[0]==='done'&&st2[1]==='current');
+    await goto(page,''); const ht=await page.locator('[data-testid=home-'+tr+'-stats]').innerText(); rec(`home «${tr}» stats updated after progress`,/المراحل 1\//.test(ht)&&!/النقاط 0 /.test(ht),ht);
+    // click the current node -> stage page
+    await goto(page,'/'+tr); await page.locator('main ol > li[data-state=current] a').click(); await page.waitForURL(new RegExp('/'+tr+'/'+k.t.stages[1].id+'/?$'));
+    rec(`/${tr} clicking the current node opens stage 2`,true);
+    await goto(page,'/'+tr); await page.locator('main ol > li[data-state=locked] a').first().click(); await page.waitForSelector('[data-testid=stage-locked]');
+    rec(`/${tr} clicking a locked node shows the lock screen`,true);
+    rec(`/${tr} map errors`,errs.length===0,errs.slice(0,3).join(' | '));
+    await ctx.close();
+  }
+  const {ctx,page,errs}=await ctxPage({state:stateWith({})}); await goto(page,'');
+  const ht=page.locator('[data-testid=home-tools]'); rec('home bottom section «أدوات المساعدة»',(await ht.count())===1);
+  await ht.locator('a').click(); await page.waitForURL(/\/tools\/?$/); rec('home tools button opens /tools',true);
+  rec('home errors',errs.length===0,errs.slice(0,3).join(' | ')); await ctx.close();
+}
+
+// ================= PART: toolkit =================
+if(PARTS.includes('tools')){
+  const {ctx,page,errs}=await ctxPage({state:stateWith({}),clock:true});
+  const tid=id=>page.locator('[data-testid='+id+']');
+  await goto(page,'/tools');
+  rec('tools: 11 tools listed + index links',(await page.locator('section[data-testid^=tool-]').count())===11&&(await page.locator('[data-testid=tools-index] a').count())===11);
+  // hourglass
+  await tid('hourglass-minutes').fill('2'); await tid('hourglass-start').click();
+  const f0=+(await tid('sand-top').getAttribute('data-frac'));
+  await page.clock.runFor(60000); const f1=+(await tid('sand-top').getAttribute('data-frac')); const l1=await tid('hourglass-left').innerText();
+  rec('hourglass: configurable duration, sand level falls (animated)',f0>0.99&&f1>0.4&&f1<0.6&&/01:0\d/.test(l1),`f0=${f0} f1=${f1} left=${l1}`);
+  await tid('hourglass-pause').click(); const lp=await tid('hourglass-left').innerText(); await page.clock.runFor(5000); rec('hourglass: pause holds',(await tid('hourglass-left').innerText())===lp);
+  await tid('hourglass-start').click(); await page.clock.runFor(70000); rec('hourglass: sand runs out -> message',(await tid('hourglass-done').count())===1&&+(await tid('sand-top').getAttribute('data-frac'))===0);
+  await tid('hourglass-reset').click(); rec('hourglass: reset',(await tid('hourglass-left').innerText())==='02:00');
+  // digital timer
+  await tid('timer-h').fill('0'); await tid('timer-m').fill('0'); await tid('timer-s').fill('5'); rec('timer: display shows configured time',(await tid('timer-display').innerText())==='00:05');
+  await tid('timer-start').click(); await page.clock.runFor(2000); const td=await tid('timer-display').innerText(); await page.clock.runFor(4000);
+  rec('timer: counts down and finishes',td==='00:03'||td==='00:02'?(await tid('timer-done').count())===1:false,`mid=${td}`);
+  await tid('timer-reset').click(); await tid('mode-up').click(); await tid('sw-start').click(); await page.clock.runFor(2500);
+  const sw=await tid('sw-display').innerText(); await tid('sw-lap').click(); await tid('sw-stop').click();
+  rec('stopwatch: runs, lap recorded, stop',/^00:02\./.test(sw)&&(await tid('sw-laps').locator('li').count())===1,sw);
+  await tid('sw-reset').click(); rec('stopwatch: reset',(await tid('sw-display').innerText())==='00:00.00');
+  // pomodoro
+  await tid('pomo-focus').fill('1'); await tid('pomo-rest').fill('1'); await tid('pomo-start').click(); await page.clock.runFor(61000);
+  rec('pomodoro: focus round counted, switches to rest',(await tid('pomo-count').innerText()).includes('1')&&/استراحة/.test(await tid('pomo-phase').innerText()),await tid('pomo-count').innerText());
+  await tid('pomo-reset').click();
+  // achievements
+  await tid('ach-title').fill('أنجزت درس الرياضيات'); await tid('ach-note').fill('ساعة كاملة'); await tid('ach-add').click();
+  await tid('ach-title').fill('مشيت خمس دقائق'); await tid('ach-add').click();
+  rec('achievements table: rows added',(await tid('ach-row').count())===2&&/المجموع: 2/.test(await tid('ach-count').innerText()));
+  await tid('ach-row').first().locator('button').click(); rec('achievements table: delete row',(await tid('ach-row').count())===1);
+  // habits
+  await tid('habit-name').fill('قراءة'); await tid('habit-add').click(); await tid('habit-name').fill('رياضة'); await tid('habit-add').click();
+  rec('habits table: 2 habits x 7 day cells',(await tid('habit-row').count())===2&&(await tid('habit-cell').count())===14);
+  const cells=tid('habit-row').first().locator('[data-testid=habit-cell]'); await cells.nth(6).check(); await cells.nth(5).check();
+  rec('habits: daily check + streak counts consecutive days',(await tid('habit-row').first().locator('[data-testid=habit-streak]').innerText())==='2');
+  await tid('habit-prev').click(); rec('habits: previous week grid unchecked',(await tid('habit-row').first().locator('input:checked').count())===0); await tid('habit-next').click();
+  // tasks
+  await tid('task-input').fill('مهمة أولى'); await tid('task-add').click(); await tid('task-input').fill('مهمة ثانية'); await tid('task-add').click();
+  await tid('task-check').first().check(); rec('tasks: add/check/left counter',/1/.test(await tid('task-left').innerText())&&(await tid('task-check').count())===2);
+  await tid('task-clear').click(); rec('tasks: clear finished',(await tid('task-check').count())===1);
+  // goals
+  await tid('goal-text').nth(0).fill('أنهي الفصل الأول'); await tid('goal-check').nth(0).check(); rec('daily goals: type + check',/1 من|أنجزت 1/.test(await tid('goal-count').innerText()));
+  // breathing pacer
+  await tid('breathe-in').fill('3'); await tid('breathe-hold').fill('1'); await tid('breathe-out').fill('3'); await tid('breathe-tool-start').click(); await page.clock.runFor(1000);
+  const bp1=await tid('breathe-tool-phase').innerText(); await page.clock.runFor(5200); const bp2=await tid('breathe-tool-phase').innerText();
+  rec('breathing pacer: phases advance, cycles counted',/شهيق/.test(bp1)&&/زفير|احبس/.test(bp2)&&/1|2/.test(await tid('breathe-tool-cycles').innerText()),bp1+'/'+bp2); await tid('breathe-tool-stop').click();
+  // notes / water
+  await tid('notes-text').fill('ملاحظة تجريبية'); rec('notes: character count',/14|13|15/.test(await tid('notes-count').innerText()));
+  await tid('water-plus').click(); await tid('water-plus').click(); await tid('water-plus').click(); rec('water: +3 cups',(await tid('water-count').innerText()).replace(/\s/g,'').startsWith('3'));
+  await tid('water-goal').fill('3'); rec('water: goal reached message',(await tid('water-done').count())===1);
+  // eye rest
+  await tid('eye-on').click(); rec('eye rest 20-20-20: reminder on, 20:00',(await tid('eye-display').innerText())==='20:00'||(await tid('eye-display').innerText())==='19:59');
+  await page.clock.runFor(20*60*1000+500); rec('eye rest: after 20 minutes prompts to look away for 20 seconds',/انظر بعيدًا/.test(await tid('eye-status').innerText()));
+  await page.clock.runFor(21000); rec('eye rest: ends automatically',(await tid('eye-on').count())===1);
+  // persistence
+  await page.reload(); await page.waitForSelector('[data-testid=tools-page] [data-testid=tool-notes]');
+  const ls=await page.evaluate(()=>JSON.parse(localStorage.getItem('docraft-tools-v1')));
+  rec('tools: everything saved in localStorage and restored after reload',(await tid('notes-text').inputValue())==='ملاحظة تجريبية'&&(await tid('ach-row').count())===1&&(await tid('habit-row').count())===2&&(await tid('habit-row').first().locator('input:checked').count())===2&&(await tid('task-check').count())===1&&(await tid('water-count').innerText()).replace(/\s/g,'').startsWith('3')&&ls.hourglassMin===2&&ls.timerS===5,JSON.stringify(Object.keys(ls)));
+  rec('tools: no console/page errors',errs.length===0,errs.slice(0,3).join(' | '));
+  await ctx.close();
+}
+
 await browser.close();
 fs.writeFileSync(OUT,JSON.stringify({url:URLB,exercisesChunk:exf,results,items:itemRes},null,1));
 console.log(`\nSUMMARY checks ${results.length} pass ${results.length-failCount} fail ${failCount}`);

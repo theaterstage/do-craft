@@ -431,7 +431,7 @@ const IQ_TITLES = [
   ["الأعداد السالبة والقوى", "Negatives and powers"], ["منطق متقدم", "Advanced logic"], ["السرعة والدقة", "Speed and accuracy"], ["تحدٍّ مختلط", "Mixed challenge"], ["التحدي الأكبر", "The grand challenge"]];
 const IQ_SLOTS = [["احسب", "Calculate"], ["أكمل المتتالية", "Complete the sequence"], ["الشاذ والعلاقات", "Odd one out and analogies"], ["مسائل كلامية", "Word problems"], ["رتّب القيم", "Order the values"], ["صِل العملية بالناتج", "Match to the result"], ["منطق وأحاجٍ", "Logic and riddles"], ["صنّف الأعداد", "Sort the numbers"], ["جولة السرعة", "Speed round"], ["التحدي المختلط", "Mixed challenge"]];
 const IQ_SKILL = ["focus", "recall", "focus", "comprehension", "mastery", "recall", "metacognition", "focus", "regulation", "mastery"];
-const IQ_NOTE = "الدرجة تصف محاولة تدريب واحدة، وليست قياسًا لذكائك ولا تشخيصًا.";
+const IQ_NOTE = "الدرجة تصف محاولة تمرين واحدة، وليست قياسًا لذكائك ولا تشخيصًا.";
 
 function buildIq() {
   const stages = IQ_TITLES.map((t, i) => ({ id: "iq" + pad2(i + 1), index: i + 1, skill: i < 10 ? "focus" : "mastery", title: T(t[0], t[1]), blurb: T(`أرقام وحساب وأسئلة ذكية بمستوى صعوبة ${i + 1} من 20. ${IQ_NOTE}`, `Numbers, calculation, and smart questions at difficulty ${i + 1} of 20. The score describes one practice try, not your intelligence.`) }));

@@ -14,4 +14,4 @@ export function isStageUnlocked(track, attempts, overrides, stageId) {
 }
 const restore = buildRestore();
 const iq = buildIq();
-export { restore, iq };
+export { restore, iq, brain, proc, dragon };

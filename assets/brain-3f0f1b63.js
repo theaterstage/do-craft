@@ -1,0 +1,1 @@
+import{P as e}from"./chrome-0wY267Au.js";import{t}from"./track-view-DHAv0TKi.js";var n=e(),r=function(){return(0,n.jsx)(t,{track:`brain`})};export{r as component};

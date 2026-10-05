@@ -1,4 +1,4 @@
-// Verifies the generated exercise data of /restore (30 stages x 9) and /iq (20 stages x 10).
+// Verifies the generated exercise data: /restore 30x9, /iq 20x10, /brain 30x9, /proc 18x11, /dragon 22x16.
 // Usage: node tests/verify-exercises.mjs [path/to/assets/exercises-*.js]
 // Independent of the generator: answers are recomputed here with its own tiny expression evaluator and rules.
 import fs from "node:fs";
@@ -14,7 +14,7 @@ if (!file) {
   file = path.join(dir, f);
 }
 const mod = await import(pathToFileURL(path.resolve(file)).href);
-const { restore, iq, isStageUnlocked, stageProgress } = mod;
+const { restore, iq, brain, proc, dragon, isStageUnlocked, stageProgress } = mod;
 
 let fails = 0, checks = 0;
 function ok(c, msg) { checks++; if (!c) { fails++; if (fails <= 40) console.log("FAIL:", msg); } }
@@ -189,6 +189,76 @@ iq.items.forEach((it) => {
 { const seen = new Map(); prompts.forEach((p) => seen.set(p, (seen.get(p) || 0) + 1)); const dup = [...seen].filter(([, c]) => c > 1).map(([p]) => p); if (dup.length) console.log("duplicate prompts:", dup); eq(dup.length, 0, `iq prompts unique (${prompts.length})`); }
 console.log(`iq questions independently verified: ${verified}`);
 
+
+// ---------- new wording rule: the word «تدريب» is not used on /restore and /iq ----------
+{
+  const strings = [];
+  (function walk(o) { if (typeof o === "string") strings.push(o); else if (Array.isArray(o)) o.forEach(walk); else if (o && typeof o === "object") Object.values(o).forEach(walk); })([restore, iq]);
+  eq(strings.filter((t) => /تدريب/.test(t)).length, 0, "no «تدريب» in restore/iq data");
+}
+
+// ---------- brain (30 x 9), proc (18 x 11), dragon (22 x 16) ----------
+const SPECS = {
+  brain: { track: brain, S: 30, N: 9, prefix: "bd", slots: ["quiz", "scenario", "memory", "sprint", "order", "match", "classify", "reflect", "recall"], need: 7 },
+  proc: { track: proc, S: 18, N: 11, prefix: "pc", slots: ["breathe", "quiz", "scenario", "sprint", "order", "match", "classify", "reflect", "recall", "calibrate", "quiz"], need: 8 },
+  dragon: { track: dragon, S: 22, N: 16, prefix: "dg", slots: ["move", "move", "move", "breathe", "quiz", "scenario", "sprint", "order", "match", "classify", "reflect", "recall", "calibrate", "quiz", "memory", "sprint"], need: 12 },
+};
+function checkNewInteraction(it) {
+  const x = it.interaction, id = it.id, need = (c, m) => ok(c, `${id} ${x.type}: ${m}`);
+  const mc = (q) => { need(q.options.length === 4 && new Set(q.options.map((o) => o.ar)).size === 4, "4 unique options"); need(q.correct >= 0 && q.correct < 4 && q.explain.ar.length > 3, "correct+explain"); };
+  switch (x.type) {
+    case "quiz": need(x.questions.length >= 2, "questions"); x.questions.forEach(mc); break;
+    case "scenario": need(x.choices.length === 3 && x.choices.some((c) => c.score >= 80) && x.choices.every((c) => c.why.ar), "choices"); break;
+    case "sprint": need(x.seconds >= 30 && x.checks.length === 4, "sprint"); break;
+    case "order": need(x.items.length === 4 && x.showPrompt, "order"); break;
+    case "match": need(x.pairs.length === 3, "pairs"); break;
+    case "classify": need(x.buckets.length === 2 && x.cards.length === 5 && x.cards.filter((c) => c.bucket === "help").length === 3, "classify"); break;
+    case "reflect": need(x.prompts.length === 2, "prompts"); break;
+    case "recall": need(x.accept.length >= 1 && x.explain.ar, "recall"); break;
+    case "calibrate": mc(x.question); break;
+    case "breathe": need(x.cycles >= 3 && x.inhale >= 3 && x.exhale >= 3, "params"); break;
+    case "memory": { const a = x.items.map((i) => i.ar), b = x.decoys.map((i) => i.ar); need(a.length >= 5 && a.length === b.length && new Set([...a, ...b]).size === a.length * 2 && x.seconds > 10, "memory sets"); break; }
+    case "move": need(x.moves.length >= 3 && x.moves.every((m) => m.seconds >= 20 && m.name.ar && m.hint.ar) && /توقف/.test(x.safety.ar) && /ألم/.test(x.safety.ar) && /وليست علاجًا/.test(x.safety.ar), "moves + safety note"); break;
+    default: need(false, "unknown type " + x.type);
+  }
+}
+for (const [name, sp] of Object.entries(SPECS)) {
+  const t = sp.track;
+  checkStructure(name, t, sp.S, sp.N, sp.prefix);
+  t.items.forEach((it) => {
+    checkNewInteraction(it);
+    ok(/تعليمي/.test(it.rationale.ar) || /ليست علاجًا/.test(it.rationale.ar), `${it.id} educational note`);
+  });
+  t.stages.forEach((s) => {
+    const its = t.items.filter((i) => i.stageId === s.id);
+    sp.slots.forEach((ty, k) => eq(its[k].interaction.type, ty, `${s.id} slot ${k + 1} type`));
+    // independent cross-check of derived questions against the stage's own ordered steps and reasons
+    const ord = its.find((i) => i.interaction.type === "order").interaction.items.map((i) => i.ar);
+    const mat = its.find((i) => i.interaction.type === "match").interaction.pairs;
+    eq(ord.length, 4, `${s.id} four steps`); mat.forEach((p, k) => eq(p.left.ar, ord[k], `${s.id} match step ${k} = order step ${k}`));
+    const correctText = (q) => q.options[q.correct].ar;
+    if (name !== "brain") {
+      const dq = its.filter((i) => i.interaction.type === "quiz")[1].interaction.questions;
+      eq(dq.length, 3, `${s.id} dq has 3 questions`);
+      eq(correctText(dq[0]), ord[0], `${s.id} dq first step`); eq(correctText(dq[1]), ord[1], `${s.id} dq second step`); eq(correctText(dq[2]), mat[2].right.ar, `${s.id} dq reason`);
+      const cal = its.find((i) => i.interaction.type === "calibrate").interaction.question; eq(correctText(cal), mat[1].right.ar, `${s.id} calibrate reason`);
+    }
+    // quiz answers are not always in the same position
+  });
+  const pos = t.items.filter((i) => i.interaction.type === "quiz").flatMap((i) => i.interaction.questions.map((q) => q.correct));
+  ok(new Set(pos).size === 4, `${name} correct-answer positions vary`);
+  const qp = t.items.filter((i) => i.interaction.type === "quiz").flatMap((i) => i.interaction.questions.map((q) => q.prompt.ar)); eq(new Set(qp).size, qp.length, `${name} quiz prompts unique`);
+  eq(stageProgress(t.items, [], sp.prefix + "01").need, sp.need, `${name} unlock need`);
+  ok(isStageUnlocked(t, [], [], sp.prefix + "01") && !isStageUnlocked(t, [], [], sp.prefix + "02"), `${name} lock state at start`);
+  const s1 = t.items.filter((i) => i.stageId === sp.prefix + "01"), att = (n) => s1.slice(0, n).map((i) => ({ trainingId: i.id, passed: true }));
+  ok(!isStageUnlocked(t, att(sp.need - 1), [], sp.prefix + "02") && isStageUnlocked(t, att(sp.need), [], sp.prefix + "02"), `${name} unlock at ${sp.need}/${sp.N}`);
+}
+const moveItems = dragon.items.filter((i) => i.interaction.type === "move");
+eq(moveItems.length, 22 * 3, "dragon has 3 physical move routines per stage");
+ok(moveItems[moveItems.length - 1].interaction.moves.length > moveItems[0].interaction.moves.length, "move routines grow");
+const allIds = [...restore.items, ...iq.items, ...brain.items, ...proc.items, ...dragon.items].map((i) => i.id);
+eq(new Set(allIds).size, allIds.length, "all exercise ids unique across tracks");
+
 // ---------- unlock helper ----------
 {
   const t = restore, s1 = t.items.filter((i) => i.stageId === "rs01");
@@ -201,6 +271,7 @@ console.log(`iq questions independently verified: ${verified}`);
 }
 console.log(`restore: ${restore.stages.length} stages x 9 = ${restore.items.length} exercises; types`, JSON.stringify(seenR));
 console.log(`iq: ${iq.stages.length} stages x 10 = ${iq.items.length} exercises`);
+for (const [n, sp] of Object.entries(SPECS)) console.log(`${n}: ${sp.track.stages.length} stages x ${sp.N} = ${sp.track.items.length} exercises`);
 console.log(`${checks} checks, ${fails} failed`);
 if (fails) { console.log("RESULT: FAIL"); process.exit(1); }
-console.log("RESULT: PASS (30x9=270 restore, 20x10=200 iq)");
+console.log("RESULT: PASS (restore 30x9=270, iq 20x10=200, brain 30x9=270, proc 18x11=198, dragon 22x16=352)");

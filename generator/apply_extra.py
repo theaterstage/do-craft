@@ -151,7 +151,7 @@ def run(out):
         t=t[:m.end()]+'<p class="text-muted">جارٍ التحميل…</p>'+t[e:]
         d=out+"/train/"+tid; os.makedirs(d,exist_ok=True); wr(d+"/index.html",t)
     # ---------- 12. tests + generator sources travel with the site ----------
-    os.makedirs(out+"/tests",exist_ok=True); shutil.copy(X+"/tests/verify-exercises.mjs",out+"/tests/verify-exercises.mjs")
+    os.makedirs(out+"/tests",exist_ok=True); [shutil.copy(X+"/tests/"+f,out+"/tests/"+f) for f in os.listdir(X+"/tests")]
     os.makedirs(out+"/generator",exist_ok=True)
     for f in ("restore_data1.py","restore_data2.py","assemble.py","exercises.common.js","exercises.restore.js","exercises.iq.js","exercises.tail.js","apply_extra.py","engine.patch.js","track-view.src.js"):
         shutil.copy(X+"/"+f,out+"/generator/"+f)

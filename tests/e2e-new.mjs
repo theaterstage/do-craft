@@ -132,7 +132,7 @@ if(PARTS.includes('nav')){
   rec('home has /restore card',homeLinks.some(h=>h.endsWith('/restore')),homeLinks.filter(h=>/restore|iq/.test(h)).join(','));
   rec('home has /iq card',homeLinks.some(h=>h.endsWith('/iq')));
   rec('home has /brain card',homeLinks.some(h=>h.endsWith('/brain')));
-  const navLinks=await page.locator('nav[aria-label=Primary] a[href]').evaluateAll(a=>a.map(x=>x.getAttribute('href')));
+  const navLinks=await page.locator('aside nav a[href]').evaluateAll(a=>a.map(x=>x.getAttribute('href')));
   rec('desktop sidebar nav has restore+iq+brain+proc+dragon+tools with /do-craft base',['restore','iq','brain','proc','dragon','tools'].every(k=>navLinks.includes('/do-craft/'+k)),navLinks.join(','));
   const SENT='يسهّل المذاكرة: انتبه، وتذكّر، وابدأ. كل تمرين يشرح الجواب. الدرجة ليست ذكاء.';
   for(const [route,count,label] of [['/restore',30,'استعادة الدوبامين'],['/iq',20,'تمارين زيادة الذكاء'],['/brain',30,'تمارين مقاومة تبلد الدماغ'],['/proc',18,'مواجهة المماطلة'],['/dragon',22,'ترويض التنين الخامل']]){

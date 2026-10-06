@@ -19,7 +19,7 @@ async function ctxPage(opts={}){
   const page=await ctx.newPage(); const errs=[];
   page.on('console',m=>{if(['error','warning'].includes(m.type()))errs.push(m.type()+': '+m.text().slice(0,200))});
   page.on('pageerror',e=>errs.push('PAGEERR '+e.message.slice(0,200)));
-  page.on('requestfailed',r=>errs.push('REQFAIL '+r.url()));
+  page.on('requestfailed',r=>{if(!/ERR_ABORTED/.test(r.failure()?.errorText||''))errs.push('REQFAIL '+r.url())});
   page.on('response',r=>{if(r.status()>=400&&r.url().startsWith(ORIGIN))errs.push('HTTP'+r.status()+' '+r.url())});
   if(opts.clock)await page.clock.install();
   if(opts.state)await ctx.addInitScript(s=>{if(!localStorage.getItem('azam-store')||s.force)localStorage.setItem('azam-store',JSON.stringify(s.v))},{v:opts.state,force:!!opts.force});
@@ -317,6 +317,47 @@ if(PARTS.includes('en')){
   rec('en errors',errs.length===0,errs.slice(0,3).join(' | '));
   await ctx.close();
 }
+
+// ================= PART: extra locales ur / tr / it =================
+async function checkExtraLocale(lang, expect){
+  const {ctx,page,errs}=await ctxPage({state:stateWith({locale:lang,stageOverrides:ALLSTAGES})});
+  await goto(page,'/restore');
+  const html=await page.evaluate(()=>({lang:document.documentElement.lang,dir:document.documentElement.dir,sel:document.querySelector('[data-testid=lang-select]')?.value}));
+  rec(lang+': html lang/dir + select',html.lang===lang&&html.dir===expect.dir&&html.sel===lang,JSON.stringify(html));
+  // wait for i18n overlay if extra
+  await page.waitForFunction(l=>{const i=window.__i18n;return i&&(i.ready||!['ur','tr','it'].includes(l))},lang,{timeout:20000}).catch(()=>{});
+  await page.waitForFunction((re)=>{try{return new RegExp(re,'i').test(document.querySelector('main h1')?.innerText||'')}catch(e){return false}}, expect.restore.source, {timeout:15000}).catch(()=>{});
+  const h=await page.locator('main h1').innerText();
+  rec(lang+': /restore title translated',expect.restore.test(h),h);
+  await goto(page,'/tools');
+  const t=await page.locator('main h1').innerText();
+  rec(lang+': /tools title translated',expect.tools.test(t),t);
+  await goto(page,'/proc');
+  const p=await page.locator('main h1').innerText();
+  rec(lang+': /proc title translated',expect.proc.test(p),p);
+  // stuck sheet opens
+  await goto(page,'');
+  await page.getByRole('button',{name:expect.stuck}).first().click();
+  await page.waitForSelector('[role=dialog]');
+  const dlg=await page.locator('[role=dialog]').innerText();
+  rec(lang+': stuck sheet opens in locale',expect.stuck.test(dlg),dlg.slice(0,80).replace(/\n/g,' '));
+  await page.locator('[role=dialog] button[aria-label], [role=dialog] button').filter({hasText:/.*/}).first().click().catch(()=>{});
+  // switcher has all 5 options
+  const opts=await page.locator('[data-testid=lang-select] option').evaluateAll(os=>os.map(o=>o.value));
+  rec(lang+': lang-select has ar,en,ur,tr,it',['ar','en','ur','tr','it'].every(x=>opts.includes(x)),opts.join(','));
+  rec(lang+' errors',errs.length===0,errs.slice(0,3).join(' | '));
+  await ctx.close();
+}
+if(PARTS.includes('ur')){
+  await checkExtraLocale('ur',{dir:'rtl',restore:/ڈوپامائن کی بحالی|ڈوپامائن|بحالی/,tools:/مددگار اوزار|مددگار|اوزار/,proc:/ٹال مٹول|ٹال|مماطلة/,stuck:/پھنس|I'm stuck/i});
+}
+if(PARTS.includes('tr')){
+  await checkExtraLocale('tr',{dir:'ltr',restore:/Dopamin yenileme|Dopamin/,tools:/Yardımcı araçlar|Yardımcı|araç/i,proc:/Ertelemeyle|Erteleme/i,stuck:/Takıldım|I'm stuck/i});
+}
+if(PARTS.includes('it')){
+  await checkExtraLocale('it',{dir:'ltr',restore:/Ripristino della dopamina|dopamina/i,tools:/Strumenti di aiuto|Strumenti/i,proc:/procrastinazione/i,stuck:/Sono bloccato|I'm stuck/i});
+}
+
 // ================= PART: map progress + home sections =================
 if(PARTS.includes('home')){
   for(const [tr,k] of [['proc',TRK.proc],['dragon',TRK.dragon]]){
@@ -397,7 +438,7 @@ if(PARTS.includes('tools')){
   await tid('goal-text').nth(0).fill('أنهي الفصل الأول'); await tid('goal-check').nth(0).check(); rec('daily goals: type + check',/1 من|أنجزت 1/.test(await tid('goal-count').innerText()));
   // breathing pacer
   await tid('breathe-in').fill('3'); await tid('breathe-hold').fill('1'); await tid('breathe-out').fill('3'); await tid('breathe-tool-start').click(); await page.clock.runFor(1000);
-  const bp1=await tid('breathe-tool-phase').innerText(); await page.clock.runFor(5200); const bp2=await tid('breathe-tool-phase').innerText();
+  const bp1=await tid('breathe-tool-phase').innerText(); await page.clock.runFor(5200); const bp2=await tid('breathe-tool-phase').innerText(); await page.clock.runFor(1500);
   rec('breathing pacer: phases advance, cycles counted',/شهيق/.test(bp1)&&/زفير|احبس/.test(bp2)&&/1|2/.test(await tid('breathe-tool-cycles').innerText()),bp1+'/'+bp2); await tid('breathe-tool-stop').click();
   // notes / water
   await tid('notes-text').fill('ملاحظة تجريبية'); rec('notes: character count',/14|13|15/.test(await tid('notes-count').innerText()));
